@@ -1,0 +1,8 @@
+sampleName,stage,lineage,condition,replicate
+GSM8426338_E65Epi_KO_RNA_rep1,E6.5,epiblast,KO,1
+GSM8426339_E65Epi_KO_RNA_rep2,E6.5,epiblast,KO,2
+GSM8426340_E65Epi_KO_RNA_rep3,E6.5,epiblast,KO,3
+GSM8426341_E65Epi_KO_RNA_rep4,E6.5,epiblast,KO,4
+GSM8426342_E65Epi_KO_RNA_rep5,E6.5,epiblast,KO,5
+GSM8426357_E85_KO_Epi_RNA_rep1,E8.5,epiblast,KO,1
+GSM8426358_E85_KO_Epi_RNA_rep2,E8.5,epiblast,KO,2
