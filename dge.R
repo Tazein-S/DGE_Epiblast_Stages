@@ -42,6 +42,7 @@ rownames(gene_map) <- gene_map$ensembl_id
 # SECTION 2: Import BigWig Files and Count Genes
 # ==================================================================================
 # Now let's read in the bigWig files and figure out how much each gene is expressed
+# Using the method from: https://jtleek.com/protocols/bigwig_gene_counts/
 
 # Find all the bigWig files
 bw_files <- list.files(
@@ -79,67 +80,66 @@ rownames(gene_counts) <- names(genes)
 colnames(gene_counts) <- sample_names
 
 # --- Loop through each bigWig file and count up gene expression ---
-# This basically sums up the coverage over each gene
+# Using coverage-based approach for accurate quantification
 for (i in seq_along(bw_files)) {
-  # Load the bigWig data
-  bw_gr <- import(bw_files[i], format = "BigWig")
+  message("Processing sample ", i, " of ", length(bw_files), ": ", sample_names[i])
   
-  # Find where genes and bigWig regions overlap
-  overlaps <- findOverlaps(genes, bw_gr)
+  # Import bigWig as coverage (RleList)
+  bw_cov <- import(bw_files[i], format = "BigWig", as = "RleList")
   
-  if (length(overlaps) > 0) {
-    # Get the genes and bigWig chunks that overlap
-    gene_hits <- genes[queryHits(overlaps)]
-    bw_hits <- bw_gr[subjectHits(overlaps)]
-    
-    # How much do they overlap?
-    overlap_widths <- width(pintersect(gene_hits, bw_hits))
-    
-    # Weight the coverage by how much they overlap
-    weighted_scores <- bw_hits$score * overlap_widths
-    
-    # Add up all the weighted scores for each gene
-    gene_sums <- tapply(weighted_scores, queryHits(overlaps), sum)
-    
-    # Store the counts
-    gene_counts[as.integer(names(gene_sums)), i] <- gene_sums
-  }
+  # Ensure genes and bigWig coverage have matching seqlevels in the same order
+  common_chroms <- intersect(seqlevels(genes), names(bw_cov))
+  
+  # Subset and reorder both to match
+  genes_subset <- keepSeqlevels(genes, common_chroms, pruning.mode = "coarse")
+  seqlevels(genes_subset) <- common_chroms  # Ensure order matches
+  bw_cov <- bw_cov[common_chroms]
+  
+  # Convert genes to GRangesList, split by chromosome
+  genes_by_chr <- split(genes_subset, seqnames(genes_subset))
+  
+  # Calculate the coverage over each gene body
+  gene_views <- Views(bw_cov, ranges(genes_by_chr))
+  
+  # Sum the coverage values across each gene
+  # This returns a list with one element per chromosome, each containing sums per gene
+  gene_sums_list <- lapply(gene_views, viewSums)
+  
+  # Flatten the list to get a vector of all gene sums
+  gene_sums <- unlist(gene_sums_list)
+  
+  # Get the corresponding gene names
+  all_gene_names <- unlist(lapply(genes_by_chr, names))
+  names(gene_sums) <- all_gene_names
+  
+  # Store counts in the full matrix (matching by gene names)
+  gene_counts[all_gene_names, i] <- gene_sums
 }
 
-# ==================================================================================
-# SECTION 3: Load Metadata and Filter to Just E6.5 and E8.5
-# ==================================================================================
-# We only want to compare the last two developmental stages
-
-# Load the sample info
-coldata <- read.csv("metadata.csv", stringsAsFactors = FALSE)
-
-# Keep only E6.5 and E8.5 samples
-coldata <- coldata[coldata$stage %in% c("E6.5", "E8.5"), ]
-
-# Make sure the factors are in the right order
-coldata$stage <- factor(coldata$stage, levels = c("E6.5", "E8.5"))
-coldata$condition <- factor(coldata$condition, levels = c("WT", "KO"))
-coldata$lineage <- factor(coldata$lineage)
-
-# Match up the count matrix with the filtered metadata
-gene_counts <- gene_counts[, coldata$sampleName]
-
-# ================================================================
-# SAVE COUNTS MATRIX
-# ================================================================
+# Save the full count matrix (before filtering by metadata)
 write.table(
   gene_counts,
-  file = "counts_matrix.tsv",
+  file = "counts_matrix_all_samples.tsv",
   sep = "\t",
   quote = FALSE,
   col.names = NA
 )
 
 # ==================================================================================
+# SECTION 3: Load Metadata
+# ==================================================================================
+
+# Load the sample info
+coldata <- read.csv("metadata.csv", stringsAsFactors = FALSE)
+
+# Make sure the factors are in the right order
+coldata$stage <- factor(coldata$stage, levels = c("E6.5", "E8.5"))
+coldata$condition <- factor(coldata$condition, levels = c("WT", "KO"))
+coldata$lineage <- factor(coldata$lineage)
+
+# ==================================================================================
 # HELPER FUNCTION: Convert Ensembl IDs to Gene Symbols
 # ==================================================================================
-# Because "ENSMUSG00000..." is way less readable than actual gene names
 
 convert_to_symbols <- function(ensembl_ids, gene_map) {
   # Look up the gene symbols
@@ -446,11 +446,23 @@ DAVID_down <- read.csv("DAVID_down.csv", stringsAsFactors = FALSE)
 sig_DAVID_up <- DAVID_up[DAVID_up$FDR < 0.05, ]
 sig_DAVID_down <- DAVID_down[DAVID_down$FDR < 0.05, ]
 
-# Add regulation direction labels
-sig_DAVID_up$DGE <- "Upregulated"
-sig_DAVID_down$DGE <- "Downregulated"
+# Add regulation direction labels only if there are significant terms
+if (nrow(sig_DAVID_up) > 0) {
+  sig_DAVID_up$DGE <- "Upregulated"
+}
+
+if (nrow(sig_DAVID_down) > 0) {
+  sig_DAVID_down$DGE <- "Downregulated"
+}
 
 # Combine up and down results
 sig_DAVID_combined <- suppressWarnings(rbind(sig_DAVID_up, sig_DAVID_down))
 
+# Save combined DAVID results
+if (nrow(sig_DAVID_combined) > 0) {
+  write.csv(sig_DAVID_combined, "DAVID_combined_significant.csv", row.names = FALSE)
+}
+
+# ==================================================================================
+# END OF SCRIPT
 # ==================================================================================
